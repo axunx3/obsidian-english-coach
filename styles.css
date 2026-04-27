@@ -1,0 +1,12 @@
+.epc-modal h2 {
+  margin-top: 0;
+}
+
+.epc-modal textarea {
+  min-height: 4em;
+  width: 100%;
+}
+
+.epc-status {
+  font-variant-numeric: tabular-nums;
+}
