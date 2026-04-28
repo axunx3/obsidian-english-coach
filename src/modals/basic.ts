@@ -10,16 +10,23 @@ import type { CorrectionResult } from "../llm";
 
 export class VocabModal extends Modal {
   plugin: EnglishPracticePlugin;
-  word = "";
-  sentence = "";
-  source = "";
+  word: string;
+  sentence: string;
+  source: string;
   alsoSRSFile: boolean;
   alsoDeck = true;
 
-  constructor(app: App, plugin: EnglishPracticePlugin) {
+  constructor(
+    app: App,
+    plugin: EnglishPracticePlugin,
+    initial?: { word?: string; sentence?: string; source?: string }
+  ) {
     super(app);
     this.plugin = plugin;
     this.alsoSRSFile = plugin.settings.srsExportEnabled;
+    this.word = initial?.word ?? "";
+    this.sentence = initial?.sentence ?? "";
+    this.source = initial?.source ?? "";
   }
 
   onOpen(): void {
@@ -29,11 +36,13 @@ export class VocabModal extends Modal {
 
     new Setting(contentEl)
       .setName("Word / phrase")
-      .addText((t) => t.onChange((v) => (this.word = v)));
+      .addText((t) => t.setValue(this.word).onChange((v) => (this.word = v)));
     new Setting(contentEl)
       .setName("Sentence in context")
-      .addTextArea((t) => t.onChange((v) => (this.sentence = v)));
-    new Setting(contentEl).setName("Source").addText((t) => t.onChange((v) => (this.source = v)));
+      .addTextArea((t) => t.setValue(this.sentence).onChange((v) => (this.sentence = v)));
+    new Setting(contentEl)
+      .setName("Source")
+      .addText((t) => t.setValue(this.source).onChange((v) => (this.source = v)));
     new Setting(contentEl)
       .setName("Also add to internal SRS deck (FSRS)")
       .addToggle((t) => t.setValue(this.alsoDeck).onChange((v) => (this.alsoDeck = v)));

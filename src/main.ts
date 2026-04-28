@@ -1,6 +1,6 @@
 import {
   Editor,
-  MarkdownView,
+  Menu,
   Notice,
   Plugin,
   TFile,
@@ -9,17 +9,11 @@ import {
   moment,
 } from "obsidian";
 import {
-  appendToTodaySection,
-  appendToSRSFile,
-  escapePipes,
-  extractSection,
-  incrementDoneCounter,
+  dailyPath,
+  getOrCreateDaily,
   openDailyNote,
   openWeeklyReview,
-  parseVocabTable,
   replaceSection,
-  getOrCreateDaily,
-  dailyPath,
 } from "./daily";
 import { findClaudeCli, LLMService } from "./llm";
 import {
@@ -66,93 +60,77 @@ export default class EnglishPracticePlugin extends Plugin {
     await this.refreshStatusBar();
     this.statusBarEl.addEventListener("click", () => void this.openReviewSession());
 
-    // -- core
+    // -------------------- Palette commands --------------------
+    // Naming convention: each command starts with a verb and contains "English"
+    // so fuzzy-typing "english" surfaces the whole group, but the count stays
+    // tight (12 commands). Per-selection capture lives in the editor right-click
+    // menu (registerEvent below), not the palette.
+
+    // Open / Navigate
     this.addCommand({
       id: "open-daily",
-      name: "Open today's practice note",
+      name: "Open today's English note",
       callback: () => openDailyNote(this),
     });
     this.addCommand({
-      id: "open-weekly",
-      name: "Open this week's review",
-      callback: () => openWeeklyReview(this),
+      id: "open-chat",
+      name: "Open English chat",
+      callback: () => this.activateChatView(),
     });
     this.addCommand({
-      id: "quick-add-vocab",
-      name: "Quick-add vocabulary",
+      id: "open-weekly",
+      name: "Open English weekly review",
+      callback: () => openWeeklyReview(this),
+    });
+
+    // Practice / Capture
+    this.addCommand({
+      id: "add-vocab",
+      name: "Add English vocabulary",
       callback: () => new VocabModal(this.app, this).open(),
     });
     this.addCommand({
       id: "log-shadowing",
-      name: "Log shadowing session",
+      name: "Log English shadowing",
       callback: () => new ShadowingModal(this.app, this).open(),
     });
     this.addCommand({
       id: "log-speaking",
-      name: "Log speaking session",
+      name: "Log English speaking",
       callback: () => new SpeakingModal(this.app, this).open(),
     });
-
-    // -- LLM
-    this.addCommand({
-      id: "correct-selection",
-      name: "Correct selected English (LLM)",
-      editorCallback: (editor: Editor) => this.correctSelection(editor),
-    });
-    this.addCommand({
-      id: "polish-output-journal",
-      name: "Polish today's Output Journal (LLM)",
-      callback: () => this.polishOutputJournal(),
-    });
-    this.addCommand({
-      id: "generate-speaking-prompt",
-      name: "Generate today's speaking prompt (LLM)",
-      callback: () => this.generateSpeakingPrompt(),
-    });
-
-    // -- TTS
-    this.addCommand({
-      id: "speak-selection",
-      name: "Read selection aloud (TTS)",
-      editorCallback: (editor: Editor) => this.speakText(editor.getSelection()),
-    });
-    this.addCommand({
-      id: "speak-output-journal",
-      name: "Read today's Output Journal aloud (TTS)",
-      callback: () => this.speakOutputJournal(),
-    });
-
-    // -- SR-file (legacy)
-    this.addCommand({
-      id: "sync-vocab-to-srs",
-      name: "Sync today's vocab to SR-file",
-      callback: () => this.syncTodayVocabToSRS(),
-    });
-
-    // -- new in v0.5
     this.addCommand({
       id: "mine-sentence",
-      name: "Mine sentence (sentence → cloze card)",
+      name: "Mine English sentence (selected)",
       editorCallback: (editor: Editor) => this.mineSelection(editor),
     });
     this.addCommand({
       id: "lookup-word",
-      name: "Look up word at cursor (dictionary)",
-      editorCallback: (editor: Editor, view: MarkdownView) => this.lookupAtCursor(editor),
+      name: "Look up English word at cursor",
+      editorCallback: (editor: Editor) => this.lookupAtCursor(editor),
+    });
+
+    // LLM
+    this.addCommand({
+      id: "correct-selection",
+      name: "Correct English selection (LLM)",
+      editorCallback: (editor: Editor) => this.correctSelection(editor),
     });
     this.addCommand({
+      id: "speaking-prompt",
+      name: "Generate today's English speaking prompt",
+      callback: () => this.generateSpeakingPrompt(),
+    });
+
+    // Review
+    this.addCommand({
       id: "review-due",
-      name: "Review due cards (FSRS)",
+      name: "Review English flashcards",
       callback: () => this.openReviewSession(),
     });
     this.addCommand({
-      id: "open-chat",
-      name: "Open English chat panel",
-      callback: () => this.activateChatView(),
-    });
-    this.addCommand({
       id: "deck-stats",
-      name: "Show deck stats",
+      name: "Show English deck stats",
       callback: async () => {
         await this.cards.ensureLoaded();
         const c = this.cards.counts();
@@ -162,6 +140,17 @@ export default class EnglishPracticePlugin extends Plugin {
         );
       },
     });
+
+    // -------------------- Editor right-click menu --------------------
+    // Quick-capture without typing in the palette. Only shows when there's a
+    // text selection — keeps the menu uncluttered when there isn't.
+    this.registerEvent(
+      this.app.workspace.on("editor-menu", (menu: Menu, editor: Editor) => {
+        const selection = editor.getSelection().trim();
+        if (!selection) return;
+        this.addEditorMenuItems(menu, editor, selection);
+      })
+    );
 
     this.addSettingTab(new EnglishPracticeSettingTab(this.app, this));
 
@@ -261,33 +250,6 @@ export default class EnglishPracticePlugin extends Plugin {
     }
   }
 
-  async polishOutputJournal(): Promise<void> {
-    if (!this.isLLMReady()) {
-      new Notice(this.llmNotReadyMsg());
-      return;
-    }
-    const file = await getOrCreateDaily(this);
-    const text = await this.app.vault.read(file);
-    const section = extractSection(text, "Output journal");
-    if (!section.body.trim()) {
-      new Notice("Output journal is empty — write something first.");
-      return;
-    }
-    const loading = new Notice("Polishing…", 0);
-    try {
-      const result = await this.llm.correct(section.body);
-      loading.hide();
-      new CorrectionModal(this.app, section.body, result, async (corrected) => {
-        const updated = replaceSection(text, "Output journal", corrected);
-        await this.app.vault.modify(file, updated);
-        new Notice("Output journal polished.");
-      }).open();
-    } catch (err) {
-      loading.hide();
-      new Notice(`LLM error: ${(err as Error).message}`);
-    }
-  }
-
   async generateSpeakingPrompt(): Promise<void> {
     if (!this.isLLMReady()) {
       new Notice(this.llmNotReadyMsg());
@@ -333,29 +295,67 @@ export default class EnglishPracticePlugin extends Plugin {
     window.speechSynthesis.speak(u);
   }
 
-  async speakOutputJournal(): Promise<void> {
-    const file = await getOrCreateDaily(this);
-    const text = await this.app.vault.read(file);
-    const section = extractSection(text, "Output journal");
-    if (!section.body.trim()) {
-      new Notice("Output journal is empty.");
-      return;
-    }
-    this.speakText(section.body);
-  }
+  // ------------------------------- editor right-click menu
 
-  // ------------------------------- SR-file (legacy)
+  private addEditorMenuItems(menu: Menu, editor: Editor, selection: string): void {
+    const isOneWord = !/\s/.test(selection);
+    const fromLine = editor.getCursor("from").line;
+    const surroundingLine = editor.getLine(fromLine);
+    const sentence = isOneWord ? surroundingLine : selection;
+    const word = isOneWord ? selection : "";
 
-  async syncTodayVocabToSRS(): Promise<void> {
-    const file = await getOrCreateDaily(this);
-    const text = await this.app.vault.read(file);
-    const rows = parseVocabTable(text);
-    if (rows.length === 0) {
-      new Notice("No vocab in today's note.");
-      return;
-    }
-    const added = await appendToSRSFile(this, rows);
-    new Notice(`Synced ${added} new card(s) to SR-file.`);
+    const SECTION = "english-practice";
+
+    menu.addItem((item) => {
+      (item as any).setSection?.(SECTION);
+      item
+        .setTitle("Add to English vocab")
+        .setIcon("book")
+        .onClick(() => {
+          new VocabModal(this.app, this, { word, sentence }).open();
+        });
+    });
+
+    menu.addItem((item) => {
+      (item as any).setSection?.(SECTION);
+      item
+        .setTitle("Mine as cloze (English)")
+        .setIcon("scissors")
+        .onClick(() => {
+          new MineSentenceModal(this.app, this, selection).open();
+        });
+    });
+
+    menu.addItem((item) => {
+      (item as any).setSection?.(SECTION);
+      item
+        .setTitle("Look up (English)")
+        .setIcon("book-open")
+        .onClick(() => {
+          const lookupWord = isOneWord ? selection : selection.split(/\s+/)[0];
+          new LookupModal(this.app, this, lookupWord, sentence).open();
+        });
+    });
+
+    menu.addItem((item) => {
+      (item as any).setSection?.(SECTION);
+      item
+        .setTitle("Correct with LLM (English)")
+        .setIcon("wand-2")
+        .onClick(() => {
+          this.correctSelection(editor);
+        });
+    });
+
+    menu.addItem((item) => {
+      (item as any).setSection?.(SECTION);
+      item
+        .setTitle("Read aloud (English)")
+        .setIcon("volume-2")
+        .onClick(() => {
+          this.speakText(selection);
+        });
+    });
   }
 
   // ------------------------------- mine + lookup + review

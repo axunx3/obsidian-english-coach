@@ -1,7 +1,7 @@
 {
   "id": "english-practice-coach",
   "name": "English Practice Coach",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "minAppVersion": "1.4.0",
   "description": "Daily practice scaffold for non-native English learners. Adds commands for daily/weekly notes, vocab capture, and shadowing logs — focused on output, not input.",
   "author": "Donovan",
