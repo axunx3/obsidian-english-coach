@@ -191,11 +191,23 @@ export class LLMService {
       system,
       user,
     ];
+    // Spawn in a neutral cwd (system tmp dir) so the child process does NOT
+    // try to scan the vault for project context. Without this, macOS prompts
+    // for permission to read every vault subfolder claude touches.
+    let neutralCwd: string | undefined;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const os = require("os") as typeof import("os");
+      neutralCwd = os.tmpdir();
+    } catch {
+      // ignore — fall back to inherited cwd
+    }
     return new Promise<string>((resolve, reject) => {
       cp.execFile(
         bin,
         args,
         {
+          cwd: neutralCwd,
           maxBuffer: 16 * 1024 * 1024,
           timeout: 120_000,
           env: {
