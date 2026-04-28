@@ -61,27 +61,32 @@ export class VocabModal extends Modal {
             new Notice("Word is required");
             return;
           }
-          const row = `| ${this.word} | ${escapePipes(this.sentence)} | ${escapePipes(this.source)} |`;
-          await appendToTodaySection(this.plugin, "Vocab encountered", row);
-          await incrementDoneCounter(this.plugin, "vocab", 1);
-          if (this.alsoDeck) {
-            await this.plugin.cards.ensureLoaded();
-            this.plugin.cards.add({
-              type: "vocab",
-              front: this.word.trim(),
-              back: this.sentence.trim() || this.word.trim(),
-              source: this.source.trim(),
-              context: this.sentence.trim() || undefined,
-            });
-            await this.plugin.cards.save();
+          try {
+            const row = `| ${this.word} | ${escapePipes(this.sentence)} | ${escapePipes(this.source)} |`;
+            await appendToTodaySection(this.plugin, "Vocab encountered", row);
+            await incrementDoneCounter(this.plugin, "vocab", 1);
+            if (this.alsoDeck) {
+              await this.plugin.cards.ensureLoaded();
+              this.plugin.cards.add({
+                type: "vocab",
+                front: this.word.trim(),
+                back: this.sentence.trim() || this.word.trim(),
+                source: this.source.trim(),
+                context: this.sentence.trim() || undefined,
+              });
+              await this.plugin.cards.save();
+            }
+            if (this.alsoSRSFile) {
+              await appendToSRSFile(this.plugin, [
+                { word: this.word, sentence: this.sentence, source: this.source },
+              ]);
+            }
+            new Notice(`Added "${this.word}"`);
+            this.close();
+          } catch (err) {
+            console.error("[english-practice-coach] add vocab failed", err);
+            new Notice(`Add failed: ${(err as Error).message}`, 10000);
           }
-          if (this.alsoSRSFile) {
-            await appendToSRSFile(this.plugin, [
-              { word: this.word, sentence: this.sentence, source: this.source },
-            ]);
-          }
-          new Notice(`Added "${this.word}"`);
-          this.close();
         })
     );
   }

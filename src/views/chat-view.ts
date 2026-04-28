@@ -18,8 +18,8 @@ export class ChatView extends ItemView {
   correctionMode: boolean;
   busy = false;
   startedAt = Date.now();
-  lastLoggedMinute = 0;
-  intervalId?: number;
+  lastLoggedTotal = 0;
+  hasUserInteracted = false;
 
   constructor(leaf: WorkspaceLeaf, plugin: EnglishPracticePlugin) {
     super(leaf);
@@ -81,13 +81,10 @@ export class ChatView extends ItemView {
     });
     sendBtn.addEventListener("click", () => void this.send());
 
-    // log time every minute while view is open
-    this.intervalId = window.setInterval(() => this.maybeLogTime(), 60_000);
   }
 
   async onClose(): Promise<void> {
-    if (this.intervalId) window.clearInterval(this.intervalId);
-    await this.maybeLogTime(true);
+    await this.logSessionTime();
   }
 
   private renderMessages(): void {
@@ -122,6 +119,7 @@ export class ChatView extends ItemView {
       return;
     }
     this.busy = true;
+    this.hasUserInteracted = true;
     this.inputEl.value = "";
 
     this.messages.push({ role: "user", content: text, ts: Date.now() });
@@ -173,23 +171,27 @@ export class ChatView extends ItemView {
     this.inputEl.focus();
   }
 
-  /** Log time spent. Idempotent — only logs the delta since last log. */
-  private async maybeLogTime(force = false): Promise<void> {
+  /**
+   * Log a single line for this whole session on close. Only fires if the user
+   * actually sent at least one message AND the session was ≥1 min, to avoid
+   * polluting the daily note with stub entries.
+   */
+  private async logSessionTime(): Promise<void> {
+    if (!this.hasUserInteracted) return;
     const totalMin = Math.floor((Date.now() - this.startedAt) / 60_000);
-    if (totalMin <= this.lastLoggedMinute) return;
-    if (!force && totalMin - this.lastLoggedMinute < 1) return;
-    const delta = totalMin - this.lastLoggedMinute;
-    this.lastLoggedMinute = totalMin;
+    const delta = totalMin - this.lastLoggedTotal;
     if (delta <= 0) return;
+    this.lastLoggedTotal = totalMin;
+    const userMessages = this.messages.filter((m) => m.role === "user").length;
     try {
       await appendToTodaySection(
         this.plugin,
         "Speaking (LLM voice / self-talk)",
-        `- **${delta} min** — chat panel — ${this.messages.length} message(s)`
+        `- **${delta} min** — chat panel — ${userMessages} message(s) sent`
       );
       await incrementDoneCounter(this.plugin, "speaking_minutes", delta);
     } catch {
-      // ignore — daily note may not exist on first launch
+      // ignore
     }
   }
 }

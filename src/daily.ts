@@ -26,7 +26,34 @@ export async function getOrCreateDaily(plugin: EnglishPracticePlugin): Promise<T
     await plugin.app.vault.create(path, dailyTemplate(plugin, date));
     file = plugin.app.vault.getAbstractFileByPath(path);
   }
+  // Migrate older notes — make sure newer template sections exist in the right place.
+  if (file instanceof TFile) await migrateDailyNote(plugin, file);
   return file as TFile;
+}
+
+/**
+ * Idempotent: insert any missing sections that the current template expects,
+ * each one positioned right before its expected successor. Older daily notes
+ * created before v0.5 lack `## Mined sentences`, which made mining silently
+ * land at the bottom of the file (after Reflection).
+ */
+async function migrateDailyNote(plugin: EnglishPracticePlugin, file: TFile): Promise<void> {
+  const expected: { section: string; before: string }[] = [
+    { section: "Mined sentences", before: "Output journal" },
+    { section: "Today's prompt", before: "Speaking (LLM voice / self-talk)" },
+  ];
+  let text = await plugin.app.vault.read(file);
+  let dirty = false;
+  for (const { section, before } of expected) {
+    if (text.includes(`## ${section}`)) continue;
+    const lines = text.split("\n");
+    const beforeIdx = lines.findIndex((l) => l.trim() === `## ${before}`);
+    if (beforeIdx === -1) continue; // no anchor — leave as-is
+    lines.splice(beforeIdx, 0, `## ${section}`, "", "");
+    text = lines.join("\n");
+    dirty = true;
+  }
+  if (dirty) await plugin.app.vault.modify(file, text);
 }
 
 export function dailyTemplate(plugin: EnglishPracticePlugin, date: string): string {

@@ -26,8 +26,11 @@ export class MineSentenceModal extends Modal {
     contentEl.addClass("epc-modal");
     contentEl.addClass("epc-mine");
     contentEl.createEl("h2", { text: "Mine sentence" });
+    contentEl.createEl("p", {
+      cls: "epc-why",
+      text: "Click any word in the sentence below to mark it as the cloze answer (click again to unmark). The preview at the bottom shows what the front of the card will look like.",
+    });
 
-    contentEl.createEl("h3", { text: "Click word(s) to cloze" });
     const sentenceEl = contentEl.createDiv({ cls: "epc-sentence" });
     this.renderTokens(sentenceEl);
 
@@ -58,28 +61,35 @@ export class MineSentenceModal extends Modal {
           .setCta()
           .onClick(async () => {
             if (this.targets.size === 0) {
-              new Notice("Click at least one word to mark as cloze.");
+              new Notice("Click at least one word in the sentence above to mark it as cloze.");
               return;
             }
-            await this.plugin.cards.ensureLoaded();
-            const front = this.frontText();
-            const back = this.tokens.join("");
-            this.plugin.cards.add({
-              type: "cloze",
-              front,
-              back,
-              source: this.source,
-              context: back,
-            });
-            await this.plugin.cards.save();
+            try {
+              await this.plugin.cards.ensureLoaded();
+              const front = this.frontText();
+              const back = this.tokens.join("");
+              this.plugin.cards.add({
+                type: "cloze",
+                front,
+                back,
+                source: this.source,
+                context: back,
+              });
+              await this.plugin.cards.save();
 
-            const minedLine = `- "${back}" — ${this.source || "(no source)"}${
-              this.notes ? `\n  - ${this.notes}` : ""
-            }`;
-            await appendToTodaySection(this.plugin, "Mined sentences", minedLine);
+              const minedLine = `- "${back}" — ${this.source || "(no source)"}${
+                this.notes ? `\n  - ${this.notes}` : ""
+              }`;
+              await appendToTodaySection(this.plugin, "Mined sentences", minedLine);
 
-            new Notice(`Mined: ${this.targetsAsString()} (${this.plugin.cards.counts().total} total)`);
-            this.close();
+              new Notice(
+                `Mined: ${this.targetsAsString()} (${this.plugin.cards.counts().total} total)`
+              );
+              this.close();
+            } catch (err) {
+              console.error("[english-practice-coach] mine sentence failed", err);
+              new Notice(`Mine failed: ${(err as Error).message}`, 10000);
+            }
           })
       )
       .addButton((b) => b.setButtonText("Cancel").onClick(() => this.close()));
