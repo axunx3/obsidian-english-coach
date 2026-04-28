@@ -34,6 +34,10 @@ Three provider modes:
 
 The CLI mode shells out to `claude -p --output-format json --model claude-sonnet-4-5 --append-system-prompt "..." "..."` and uses your subscription quota.
 
+The plugin **auto-detects** the `claude` binary in common locations (`~/.claude/local/`, `~/.local/bin/`, Homebrew, NVM, etc.) on startup. If detection fails, paste the absolute path manually, or use the **Re-detect** button in settings. A **Test LLM connection** button verifies the full pipeline.
+
+> Path detection logic adapted from [YishenTu/claudian](https://github.com/YishenTu/claudian) — credit for figuring out that GUI-launched Obsidian doesn't inherit shell PATH on macOS.
+
 ### Spaced repetition
 - **Auto-export to SRS file** — new vocab entries are appended to `English Learning/SRS/Vocab.md` in the [Spaced Repetition](https://github.com/st3v3nmw/obsidian-spaced-repetition) plugin's `::` card format. Install that plugin to get full SRS review on top.
 - **Sync today's vocab to SRS** — manual command to backfill.

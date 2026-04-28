@@ -1,6 +1,6 @@
 {
   "name": "obsidian-english-practice-coach",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Obsidian plugin for daily English practice tracking",
   "main": "main.js",
   "scripts": {

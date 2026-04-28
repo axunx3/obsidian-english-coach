@@ -81,6 +81,7 @@ export default class EnglishPracticePlugin extends Plugin {
 
   async onload() {
     await this.loadSettings();
+    await this.maybeAutoDetectClaudePath();
     this.llm = new LLMService(this);
 
     this.addRibbonIcon("languages", "Open today's English practice", () => {
@@ -179,6 +180,22 @@ export default class EnglishPracticePlugin extends Plugin {
 
   async saveSettings() {
     await this.saveData(this.settings);
+  }
+
+  /** If the user hasn't customized the binary path, try to find `claude` in common locations. */
+  async maybeAutoDetectClaudePath(): Promise<void> {
+    if (this.settings.claudeBinPath && this.settings.claudeBinPath !== "claude") {
+      return; // user-set, leave alone
+    }
+    try {
+      const detected = findClaudeCli();
+      if (detected && detected !== this.settings.claudeBinPath) {
+        this.settings.claudeBinPath = detected;
+        await this.saveSettings();
+      }
+    } catch {
+      // Mobile or restricted environment — silently skip
+    }
   }
 
   // -------------------- folder + path helpers --------------------
@@ -654,6 +671,14 @@ class LLMService {
     throw new Error("LLM provider not configured");
   }
 
+  async test(): Promise<string> {
+    return this.complete(
+      "Reply with the literal word OK and nothing else.",
+      "You are a test assistant. Reply with one word.",
+      32
+    );
+  }
+
   private async claudeCli(user: string, system: string): Promise<string> {
     let cp: typeof import("child_process");
     try {
@@ -664,7 +689,13 @@ class LLMService {
         "Claude Code CLI provider needs Node child_process — desktop only."
       );
     }
-    const bin = this.s.claudeBinPath || "claude";
+    let bin = this.s.claudeBinPath || "claude";
+    if (bin === "claude") {
+      // No absolute path configured — try detecting at call time
+      // in case the user just installed the CLI.
+      const detected = findClaudeCli();
+      if (detected) bin = detected;
+    }
     const args = [
       "-p",
       "--output-format",
@@ -682,7 +713,13 @@ class LLMService {
         {
           maxBuffer: 16 * 1024 * 1024,
           timeout: 120_000,
-          env: { ...process.env, CLAUDE_CODE_NONINTERACTIVE: "1" },
+          env: {
+            ...process.env,
+            // GUI-launched Obsidian doesn't inherit shell PATH; supply the common bin dirs
+            // so `claude`'s internal node lookup works.
+            PATH: enhancedPath(),
+            CLAUDE_CODE_NONINTERACTIVE: "1",
+          },
         },
         (err, stdout, stderr) => {
           if (err) {
@@ -690,13 +727,18 @@ class LLMService {
               (typeof stderr === "string" && stderr.trim()) ||
               err.message ||
               "claude CLI failed";
-            reject(new Error(msg));
+            reject(new Error(`${msg}\n(bin=${bin})`));
             return;
           }
           const text = String(stdout);
-          // --output-format json returns: { result: "...", ... } (sometimes wrapped in array)
           try {
             const parsed = JSON.parse(text);
+            if (parsed.is_error) {
+              reject(
+                new Error(parsed.result || "claude returned is_error: true")
+              );
+              return;
+            }
             const result =
               parsed.result ??
               parsed.text ??
@@ -710,6 +752,101 @@ class LLMService {
       );
     });
   }
+}
+
+// ====================================================================
+// CLI path detection (ported from YishenTu/claudian, simplified)
+// ====================================================================
+
+function isExistingFile(p: string): boolean {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const fs = require("fs") as typeof import("fs");
+    return fs.existsSync(p) && fs.statSync(p).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Search common install locations for the `claude` binary, because GUI-launched
+ * Obsidian on macOS does not inherit the user's shell PATH.
+ * Returns null on Windows or when the binary isn't found.
+ */
+export function findClaudeCli(): string | null {
+  let osMod: typeof import("os");
+  let pathMod: typeof import("path");
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    osMod = require("os") as typeof import("os");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    pathMod = require("path") as typeof import("path");
+  } catch {
+    return null;
+  }
+  if (osMod.platform() === "win32") return null;
+  const home = osMod.homedir();
+  const candidates = [
+    pathMod.join(home, ".claude/local/claude"),
+    pathMod.join(home, ".local/bin/claude"),
+    pathMod.join(home, ".volta/bin/claude"),
+    pathMod.join(home, ".asdf/shims/claude"),
+    pathMod.join(home, ".asdf/bin/claude"),
+    "/usr/local/bin/claude",
+    "/opt/homebrew/bin/claude",
+    pathMod.join(home, "bin/claude"),
+    pathMod.join(home, ".npm-global/bin/claude"),
+  ];
+  for (const c of candidates) {
+    if (isExistingFile(c)) return c;
+  }
+  // Fallback: walk env PATH if it's populated.
+  const envPath = process.env.PATH || "";
+  for (const dir of envPath.split(":")) {
+    if (!dir) continue;
+    const c = pathMod.join(dir, "claude");
+    if (isExistingFile(c)) return c;
+  }
+  return null;
+}
+
+/**
+ * Build a PATH that includes common bin dirs the GUI-launched process likely
+ * doesn't have. Fixes "node not found" / "claude not found" when launching
+ * Obsidian from Finder/Dock.
+ */
+export function enhancedPath(): string {
+  let osMod: typeof import("os");
+  let pathMod: typeof import("path");
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    osMod = require("os") as typeof import("os");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    pathMod = require("path") as typeof import("path");
+  } catch {
+    return process.env.PATH || "";
+  }
+  const home = osMod.homedir();
+  const extras = [
+    pathMod.join(home, ".local/bin"),
+    pathMod.join(home, ".claude/local"),
+    pathMod.join(home, ".volta/bin"),
+    pathMod.join(home, ".asdf/shims"),
+    "/usr/local/bin",
+    "/opt/homebrew/bin",
+    pathMod.join(home, "bin"),
+    pathMod.join(home, ".npm-global/bin"),
+  ];
+  const current = (process.env.PATH || "").split(":").filter(Boolean);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const p of [...current, ...extras]) {
+    if (!seen.has(p)) {
+      seen.add(p);
+      out.push(p);
+    }
+  }
+  return out.join(":");
 }
 
 // ====================================================================
@@ -1148,7 +1285,7 @@ class EnglishPracticeSettingTab extends PluginSettingTab {
       new Setting(containerEl)
         .setName("Claude binary path")
         .setDesc(
-          "Default 'claude' uses your PATH. Use an absolute path if Obsidian can't find it."
+          "Auto-detected on load. Edit only if it's wrong. GUI-launched Obsidian doesn't inherit your shell PATH, so an absolute path is more reliable than `claude`."
         )
         .addText((t) =>
           t
@@ -1157,8 +1294,53 @@ class EnglishPracticeSettingTab extends PluginSettingTab {
               this.plugin.settings.claudeBinPath = v.trim() || "claude";
               await this.plugin.saveSettings();
             })
+        )
+        .addButton((b) =>
+          b
+            .setButtonText("Re-detect")
+            .onClick(async () => {
+              const detected = findClaudeCli();
+              if (detected) {
+                this.plugin.settings.claudeBinPath = detected;
+                await this.plugin.saveSettings();
+                new Notice(`Found: ${detected}`);
+                this.display();
+              } else {
+                new Notice(
+                  "Claude binary not found in common locations. Install it and try again, or paste an absolute path."
+                );
+              }
+            })
         );
     }
+
+    new Setting(containerEl)
+      .setName("Test LLM connection")
+      .setDesc(
+        "Sends a trivial prompt and reports the response. Useful after changing provider or binary path."
+      )
+      .addButton((b) =>
+        b
+          .setButtonText("Run test")
+          .setCta()
+          .onClick(async () => {
+            if (!this.plugin.isLLMReady()) {
+              new Notice(this.plugin.llmNotReadyMsg());
+              return;
+            }
+            const loading = new Notice("Testing…", 0);
+            const t0 = Date.now();
+            try {
+              const result = await this.plugin.llm.test();
+              const ms = Date.now() - t0;
+              loading.hide();
+              new Notice(`✓ ${ms} ms — ${result.slice(0, 80)}`, 8000);
+            } catch (e) {
+              loading.hide();
+              new Notice(`✗ ${(e as Error).message}`, 12000);
+            }
+          })
+      );
 
     if (
       this.plugin.settings.llmProvider === "anthropic" ||
