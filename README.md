@@ -6,6 +6,8 @@ An Obsidian plugin for non-native English learners — especially Chinese PhDs a
 
 Most of us reading this can read papers and write Slack messages in English. What we cannot do is speak fluently in meetings, riff casually, or produce writing that doesn't feel translated. That is a *training distribution* problem, not a vocabulary problem. This plugin is scaffolding for the missing reps.
 
+> **Read [WORKFLOW.md](./WORKFLOW.md)** for the design principle, the three daily loops, and how the features fit together. The README below lists features; the workflow doc explains why they exist.
+
 ## Features
 
 ### Daily structure
