@@ -24,7 +24,15 @@ Most of us reading this can read papers and write Slack messages in English. Wha
 - **Polish today's Output Journal** — corrects the whole journal section in one pass.
 - **Generate today's speaking prompt** — LLM produces a focused 5-minute monologue prompt tailored to your themes and inserts it into today's note.
 
-Supports **Anthropic Claude** (default model `claude-sonnet-4-5`) and **OpenAI** (default `gpt-4o-mini`). Configure provider + API key in settings.
+Three provider modes:
+
+| Provider | Auth | Cost | Notes |
+|---|---|---|---|
+| **Anthropic API** | API key from console.anthropic.com | Pay-as-you-go (~$3/mo for typical use) | Default model `claude-sonnet-4-5` |
+| **OpenAI API** | OpenAI API key | Pay-as-you-go | Default `gpt-4o-mini` |
+| **Claude Code CLI** | Existing claude.ai Pro/Max subscription | Free with subscription | Desktop only — uses local `claude` binary, no API key needed |
+
+The CLI mode shells out to `claude -p --output-format json --model claude-sonnet-4-5 --append-system-prompt "..." "..."` and uses your subscription quota.
 
 ### Spaced repetition
 - **Auto-export to SRS file** — new vocab entries are appended to `English Learning/SRS/Vocab.md` in the [Spaced Repetition](https://github.com/st3v3nmw/obsidian-spaced-repetition) plugin's `::` card format. Install that plugin to get full SRS review on top.

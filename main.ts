@@ -17,7 +17,7 @@ import {
 // Settings
 // ====================================================================
 
-type LlmProvider = "anthropic" | "openai" | "none";
+type LlmProvider = "anthropic" | "openai" | "claude-cli" | "none";
 
 interface EnglishPracticeSettings {
   rootFolder: string;
@@ -40,6 +40,9 @@ interface EnglishPracticeSettings {
   // TTS
   ttsVoice: string;
   ttsRate: number;
+
+  // Claude Code CLI
+  claudeBinPath: string;
 }
 
 const DEFAULT_SETTINGS: EnglishPracticeSettings = {
@@ -57,11 +60,13 @@ const DEFAULT_SETTINGS: EnglishPracticeSettings = {
   srsTag: "flashcards",
   ttsVoice: "",
   ttsRate: 1.0,
+  claudeBinPath: "claude",
 };
 
 const DEFAULT_MODELS: Record<LlmProvider, string> = {
   anthropic: "claude-sonnet-4-5",
   openai: "gpt-4o-mini",
+  "claude-cli": "claude-sonnet-4-5",
   none: "",
 };
 
@@ -377,16 +382,28 @@ type: english-practice-weekly
 
   // -------------------- LLM features --------------------
 
+  isLLMReady(): boolean {
+    const p = this.settings.llmProvider;
+    if (p === "none") return false;
+    if (p === "claude-cli") return Boolean(this.settings.claudeBinPath);
+    return Boolean(this.settings.llmApiKey);
+  }
+
+  llmNotReadyMsg(): string {
+    if (this.settings.llmProvider === "claude-cli") {
+      return "Set the Claude Code binary path in plugin settings.";
+    }
+    return "Configure an LLM provider + API key in plugin settings first.";
+  }
+
   async correctSelection(editor: Editor): Promise<void> {
     const selection = editor.getSelection();
     if (!selection.trim()) {
       new Notice("Select some English text first.");
       return;
     }
-    if (this.settings.llmProvider === "none" || !this.settings.llmApiKey) {
-      new Notice(
-        "Configure an LLM provider + API key in plugin settings first."
-      );
+    if (!this.isLLMReady()) {
+      new Notice(this.llmNotReadyMsg());
       return;
     }
     const loading = new Notice("Correcting…", 0);
@@ -406,8 +423,8 @@ type: english-practice-weekly
   }
 
   async polishOutputJournal(): Promise<void> {
-    if (this.settings.llmProvider === "none" || !this.settings.llmApiKey) {
-      new Notice("Configure an LLM provider + API key first.");
+    if (!this.isLLMReady()) {
+      new Notice(this.llmNotReadyMsg());
       return;
     }
     const file = await this.getOrCreateDaily();
@@ -433,8 +450,8 @@ type: english-practice-weekly
   }
 
   async generateSpeakingPrompt(): Promise<void> {
-    if (this.settings.llmProvider === "none" || !this.settings.llmApiKey) {
-      new Notice("Configure an LLM provider + API key first.");
+    if (!this.isLLMReady()) {
+      new Notice(this.llmNotReadyMsg());
       return;
     }
     const loading = new Notice("Generating prompt…", 0);
@@ -590,6 +607,9 @@ class LLMService {
     system: string,
     maxTokens: number
   ): Promise<string> {
+    if (this.s.llmProvider === "claude-cli") {
+      return await this.claudeCli(user, system);
+    }
     if (this.s.llmProvider === "anthropic") {
       const res = await requestUrl({
         url: "https://api.anthropic.com/v1/messages",
@@ -632,6 +652,63 @@ class LLMService {
       return j?.choices?.[0]?.message?.content ?? "";
     }
     throw new Error("LLM provider not configured");
+  }
+
+  private async claudeCli(user: string, system: string): Promise<string> {
+    let cp: typeof import("child_process");
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      cp = require("child_process") as typeof import("child_process");
+    } catch (e) {
+      throw new Error(
+        "Claude Code CLI provider needs Node child_process — desktop only."
+      );
+    }
+    const bin = this.s.claudeBinPath || "claude";
+    const args = [
+      "-p",
+      "--output-format",
+      "json",
+      "--model",
+      this.model() || DEFAULT_MODELS["claude-cli"],
+      "--append-system-prompt",
+      system,
+      user,
+    ];
+    return new Promise<string>((resolve, reject) => {
+      cp.execFile(
+        bin,
+        args,
+        {
+          maxBuffer: 16 * 1024 * 1024,
+          timeout: 120_000,
+          env: { ...process.env, CLAUDE_CODE_NONINTERACTIVE: "1" },
+        },
+        (err, stdout, stderr) => {
+          if (err) {
+            const msg =
+              (typeof stderr === "string" && stderr.trim()) ||
+              err.message ||
+              "claude CLI failed";
+            reject(new Error(msg));
+            return;
+          }
+          const text = String(stdout);
+          // --output-format json returns: { result: "...", ... } (sometimes wrapped in array)
+          try {
+            const parsed = JSON.parse(text);
+            const result =
+              parsed.result ??
+              parsed.text ??
+              parsed.output ??
+              (Array.isArray(parsed) ? parsed[parsed.length - 1]?.result : null);
+            resolve(typeof result === "string" ? result : text.trim());
+          } catch {
+            resolve(text.trim());
+          }
+        }
+      );
+    });
   }
 }
 
@@ -1050,27 +1127,51 @@ class EnglishPracticeSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Provider")
+      .setDesc(
+        "'Claude Code CLI' uses your existing claude.ai Pro/Max subscription via the local `claude` binary (desktop only, no API key needed)."
+      )
       .addDropdown((d) =>
         d
           .addOption("none", "None (disabled)")
-          .addOption("anthropic", "Anthropic Claude")
-          .addOption("openai", "OpenAI")
+          .addOption("anthropic", "Anthropic API (key)")
+          .addOption("openai", "OpenAI API (key)")
+          .addOption("claude-cli", "Claude Code CLI (subscription)")
           .setValue(this.plugin.settings.llmProvider)
           .onChange(async (v) => {
             this.plugin.settings.llmProvider = v as LlmProvider;
             await this.plugin.saveSettings();
+            this.display(); // re-render to show/hide relevant fields
           })
       );
 
-    new Setting(containerEl)
-      .setName("API key")
-      .addText((t) => {
+    if (this.plugin.settings.llmProvider === "claude-cli") {
+      new Setting(containerEl)
+        .setName("Claude binary path")
+        .setDesc(
+          "Default 'claude' uses your PATH. Use an absolute path if Obsidian can't find it."
+        )
+        .addText((t) =>
+          t
+            .setValue(this.plugin.settings.claudeBinPath)
+            .onChange(async (v) => {
+              this.plugin.settings.claudeBinPath = v.trim() || "claude";
+              await this.plugin.saveSettings();
+            })
+        );
+    }
+
+    if (
+      this.plugin.settings.llmProvider === "anthropic" ||
+      this.plugin.settings.llmProvider === "openai"
+    ) {
+      new Setting(containerEl).setName("API key").addText((t) => {
         t.inputEl.type = "password";
         t.setValue(this.plugin.settings.llmApiKey).onChange(async (v) => {
           this.plugin.settings.llmApiKey = v;
           await this.plugin.saveSettings();
         });
       });
+    }
 
     new Setting(containerEl)
       .setName("Model (override)")
