@@ -35,8 +35,10 @@ export interface EnglishPracticeSettings {
 
   // -- dictionary popup
   dictSource: "llm" | "free-dict-api";
+  lookupModel: string; // override for lookup calls only — defaults to faster Haiku
 
-  // -- chat view
+  // -- conversation chat
+
   chatCorrectionMode: boolean;
   chatPersona: string;
 
@@ -61,6 +63,7 @@ export const DEFAULT_SETTINGS: EnglishPracticeSettings = {
   ttsVoice: "",
   ttsRate: 1.0,
   dictSource: "llm",
+  lookupModel: "claude-haiku-4-5",
   chatCorrectionMode: false,
   chatPersona:
     "You are a friendly English conversation partner for a Chinese AI PhD student. Keep replies under 4 sentences, ask one follow-up question, use natural casual register.",
@@ -258,17 +261,43 @@ export class EnglishPracticeSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Lookup source")
       .setDesc(
-        "LLM gives best-quality definitions tailored to the sentence. Free dictionary API is offline-fast but generic."
+        "Free Dictionary API is fast (~1s). LLM gives bilingual + context-aware definitions but is slower (~5s on Claude CLI). " +
+        "In LLM mode, the plugin shows a Free-dict preview while the LLM result loads, and caches the LLM result for instant reopening."
       )
       .addDropdown((d) =>
         d
-          .addOption("llm", "LLM (uses configured provider)")
-          .addOption("free-dict-api", "Free Dictionary API (no key)")
+          .addOption("llm", "LLM with Free-dict preview (best quality, fast first paint)")
+          .addOption("free-dict-api", "Free Dictionary API only (fastest, no Chinese)")
           .setValue(this.plugin.settings.dictSource)
           .onChange(async (v) => {
             this.plugin.settings.dictSource = v as "llm" | "free-dict-api";
             await this.plugin.saveSettings();
           })
+      );
+
+    new Setting(containerEl)
+      .setName("LLM model for lookups")
+      .setDesc(
+        "Use a faster (cheaper) model for dictionary lookups. Defaults to claude-haiku-4-5; leave blank to use the main model."
+      )
+      .addText((t) =>
+        t.setValue(this.plugin.settings.lookupModel).onChange(async (v) => {
+          this.plugin.settings.lookupModel = v.trim();
+          await this.plugin.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName("Clear lookup cache")
+      .setDesc(
+        `Cached: ${this.plugin.lookups?.size?.() ?? 0} word(s).`
+      )
+      .addButton((b) =>
+        b.setButtonText("Clear cache").setWarning().onClick(async () => {
+          await this.plugin.lookups.clear();
+          new Notice("Lookup cache cleared.");
+          this.display();
+        })
       );
 
     // ---------------- Chat

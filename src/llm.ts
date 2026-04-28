@@ -60,7 +60,8 @@ export class LLMService {
     const user = context
       ? `Word: "${word}"\nContext sentence: "${context}"\nGive the meaning that fits the context.`
       : `Word: "${word}"`;
-    const raw = await this.complete(user, system, 512);
+    // Lookups are simple — use the faster (Haiku) model unless user overrides.
+    const raw = await this.complete(user, system, 512, this.s.lookupModel || "claude-haiku-4-5");
     const cleaned = stripCodeFence(raw);
     try {
       const parsed = JSON.parse(cleaned);
@@ -104,15 +105,27 @@ export class LLMService {
 
   // ---------- private
 
-  private async complete(user: string, system: string, maxTokens: number): Promise<string> {
-    return await this.completeMessages([{ role: "user", content: user }], system, maxTokens);
+  private async complete(
+    user: string,
+    system: string,
+    maxTokens: number,
+    modelOverride?: string
+  ): Promise<string> {
+    return await this.completeMessages(
+      [{ role: "user", content: user }],
+      system,
+      maxTokens,
+      modelOverride
+    );
   }
 
   private async completeMessages(
     messages: { role: "user" | "assistant"; content: string }[],
     system: string,
-    maxTokens: number
+    maxTokens: number,
+    modelOverride?: string
   ): Promise<string> {
+    const model = modelOverride || this.model();
     if (this.s.llmProvider === "claude-cli") {
       // CLI mode doesn't naturally support multi-turn; we serialize the conversation
       // into a single prompt and let the system prompt set context.
@@ -127,7 +140,7 @@ export class LLMService {
               .slice(0, -1)
               .join("\n\n")}\n--- end prior ---\nReply to the most recent [user] turn.`
           : system;
-      return await this.claudeCli(lastUser, sysWithHistory);
+      return await this.claudeCli(lastUser, sysWithHistory, model);
     }
     if (this.s.llmProvider === "anthropic") {
       const res = await requestUrl({
@@ -140,7 +153,7 @@ export class LLMService {
           "content-type": "application/json",
         },
         body: JSON.stringify({
-          model: this.model(),
+          model,
           max_tokens: maxTokens,
           system,
           messages,
@@ -158,7 +171,7 @@ export class LLMService {
           "content-type": "application/json",
         },
         body: JSON.stringify({
-          model: this.model(),
+          model,
           max_tokens: maxTokens,
           messages: [{ role: "system", content: system }, ...messages],
         }),
@@ -168,7 +181,7 @@ export class LLMService {
     throw new Error("LLM provider not configured");
   }
 
-  private async claudeCli(user: string, system: string): Promise<string> {
+  private async claudeCli(user: string, system: string, model?: string): Promise<string> {
     let cp: typeof import("child_process");
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -186,7 +199,7 @@ export class LLMService {
       "--output-format",
       "json",
       "--model",
-      this.model() || DEFAULT_MODELS["claude-cli"],
+      model || this.model() || DEFAULT_MODELS["claude-cli"],
       "--append-system-prompt",
       system,
       user,

@@ -104,6 +104,17 @@
   color: var(--text-muted);
 }
 
+.epc-lookup .epc-badge {
+  font-size: 0.78em;
+  color: var(--text-muted);
+  background: var(--background-modifier-form-field);
+  padding: 2px 8px;
+  border-radius: 10px;
+  display: inline-block;
+  margin-bottom: 0.5em;
+  letter-spacing: 0.02em;
+}
+
 /* ------- review modal ------- */
 .epc-review h2 {
   font-size: 1.4em;

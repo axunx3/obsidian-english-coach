@@ -16,6 +16,7 @@ import {
   replaceSection,
 } from "./daily";
 import { findClaudeCli, LLMService } from "./llm";
+import { LookupCache } from "./lookup-cache";
 import {
   CorrectionModal,
   ShadowingModal,
@@ -39,12 +40,14 @@ export default class EnglishPracticePlugin extends Plugin {
   statusBarEl!: HTMLElement;
   llm!: LLMService;
   cards!: CardStore;
+  lookups!: LookupCache;
 
   async onload() {
     await this.loadSettings();
     await this.maybeAutoDetectClaudePath();
     this.llm = new LLMService(this);
     this.cards = new CardStore(this.app, this.settings.rootFolder);
+    this.lookups = new LookupCache(this.app, this.settings.rootFolder);
 
     this.registerView(CHAT_VIEW_TYPE, (leaf: WorkspaceLeaf) => new ChatView(leaf, this));
 
@@ -171,6 +174,7 @@ export default class EnglishPracticePlugin extends Plugin {
   async saveSettings() {
     await this.saveData(this.settings);
     if (this.cards) this.cards.setRoot(this.settings.rootFolder);
+    if (this.lookups) this.lookups.setRoot(this.settings.rootFolder);
   }
 
   async maybeAutoDetectClaudePath(): Promise<void> {
